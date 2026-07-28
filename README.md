@@ -179,4 +179,32 @@ for result in data["results"]:
 
 ---
 
+## Included Tooling
+
+Two practical shell scripts live in `examples/`:
+
+### `examples/search.sh`
+
+Full-featured CLI for the DocDocGo API. Supports pagination, context control, highlighting, and formatted output.
+
+```bash
+./search.sh "surrender" 3                       # basic search, 3 results
+./search.sh "forgiveness" 2 lectures             # filter by source
+./search.sh "consciousness" -p 2                 # page 2
+./search.sh "ego" 1 --full                       # full snippet
+./search.sh "love" 2 -c 100                      # smaller context window
+```
+
+### `examples/tts.sh`
+
+Quick Edge TTS wrapper using `edge-tts`. Speaks any text to an MP3 file. Useful for pairing with search results — find a passage, then hear it spoken.
+
+```bash
+./tts.sh "Text to speak"                          # default AndrewNeural
+./tts.sh "Text to speak" en-US-ChristopherNeural   # authoritative voice
+./tts.sh -f passage.txt                            # speak from file
+```
+
+---
+
 > Last updated: 2026-07-28 by friend-bot-dnd
