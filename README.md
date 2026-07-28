@@ -31,6 +31,7 @@ The workhorse. Multi-word ranked search across the DocDocGo library (Hawkins, AC
 | `q` | ✅ | — | Min 4 characters. Multi-word = ranked relevance |
 | `limit` | ❌ | 100 | Max results returned |
 | `page` | ❌ | 1 | Pagination — deterministic, no overlap |
+| `context` | ❌ | 300 | Context chars around each match. Response field is `contextChars`. Try 0 to bypass/fetch default. |
 | `filter` | ❌ | `all` | `all`, `books`, `all-hawkins-books`, `lectures`, or specific source name |
 | `caseSensitive` | ❌ | `false` | Pass `true` as string |
 | `wholeWords` | ❌ | `true` | Pass `false` to allow partial matches |
@@ -120,9 +121,9 @@ These **will silently return 0 results** (no error):
 
 There's no error message — you just get empty results. Debug by checking `files_count`.
 
-### 4. `contextChars` is fixed at 300
+### 4. The param is `context`, not `contextChars`
 
-The snippet context is always ±300 chars around each match. You cannot change it via parameters. If you need more context, use `/api/read/:filename` to get the full document.
+The response field is named `contextChars`, but the actual query parameter is **`context`**. Works for any positive integer. Snippet length ≈ `2 × context + 5` (for the `...` padding). Passing `context=0` falls back to the 300 default. Larger values work fine — tested up to 600.
 
 ### 5. Pagination is deterministic but pages aren't numbered how you'd expect
 
@@ -161,7 +162,7 @@ Don't expect modern or diverse spiritual texts. It's curated around the Hawkins 
 ## Shell One-Liner
 
 ```bash
-curl -s "https://docdocgo.lak.nz/api/search?q=surrender&limit=3&filter=all-hawkins-books" | jq '.results[].snippet'
+curl -s "https://docdocgo.lak.nz/api/search?q=surrender&limit=3&filter=all-hawkins-books&context=100" | jq '.results[].snippet'
 ```
 
 ## Python Example
@@ -170,7 +171,7 @@ curl -s "https://docdocgo.lak.nz/api/search?q=surrender&limit=3&filter=all-hawki
 import requests, urllib.parse
 
 q = urllib.parse.quote("consciousness and awareness")
-r = requests.get(f"https://docdocgo.lak.nz/api/search?q={q}&limit=5")
+r = requests.get(f"https://docdocgo.lak.nz/api/search?q={q}&limit=5&context=100")
 data = r.json()
 for result in data["results"]:
     print(result["path"], "—", result["match_count"], "matches")
