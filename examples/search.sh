@@ -1,138 +1,110 @@
 #!/bin/bash
-# docdocgo search — improved
+# docdocgo GET /api/search helper
 # Usage:
-#   ./search.sh "query" [limit] [filter]          # basic search
-#   ./search.sh "query" -p 2                       # page 2
-#   ./search.sh "query" 3 lectures                 # lectures only
-#   ./search.sh "query" 1 --full                   # full snippet, no truncation
+#   ./search.sh "query" [limit] [filter]
+#   ./search.sh "query" 5 lectures -c 600
+#   ./search.sh "query" --partial
+#   ./search.sh "query" -p 2
 
-API="https://docdocgo.lak.nz/api/search"
-QUERY="$1"
+set -euo pipefail
+API="${DOCDOCGO_API:-https://docdocgo.lak.nz/api/search}"
+UA="${DOCDOCGO_UA:-docdocgo-api-guide/2.1}"
 
-# Parse args
+QUERY="${1:-}"
+if [ -z "$QUERY" ]; then
+  cat <<'USAGE'
+Usage: ./search.sh "query" [limit] [filter] [options]
+
+Options:
+  -p, --page N         Page (default 1)
+  -c, --context N      Snippet padding (default 400)
+  -g, --group-distance Max gap for multi-word groups (server default 250)
+  --partial            wholeWords=false
+  --full               Print full snippets
+  --json               Raw JSON
+
+Examples:
+  ./search.sh "surrender" 3
+  ./search.sh "nothing is causing anything" 5 lectures -c 600
+  ./search.sh "ego" 5 all-hawkins-books --partial
+USAGE
+  exit 1
+fi
+shift
+
 LIMIT=5
 FILTER="all"
 PAGE=1
+CONTEXT=400
+GROUP=""
+PARTIAL=false
 FULL=false
-CONTEXT=300
+JSON=false
 
-shift
 while [ $# -gt 0 ]; do
-    case "$1" in
-        -p|--page) PAGE="$2"; shift 2 ;;
-        -c|--context) CONTEXT="$2"; shift 2 ;;
-        --full) FULL=true; shift ;;
-        --raw) LIMIT="$2"; shift 2; RAW=true ;;
-        *) 
-            if [ "$LIMIT" = "5" ] && [ "$FILTER" = "all" ]; then
-                if [[ "$1" =~ ^[0-9]+$ ]]; then
-                    LIMIT="$1"
-                else
-                    FILTER="$1"
-                fi
-            elif [ "$FILTER" = "all" ]; then
-                FILTER="$1"
-            fi
-            shift
-            ;;
-    esac
+  case "$1" in
+    -p|--page) PAGE="$2"; shift 2 ;;
+    -c|--context) CONTEXT="$2"; shift 2 ;;
+    -g|--group-distance) GROUP="$2"; shift 2 ;;
+    --partial) PARTIAL=true; shift ;;
+    --full) FULL=true; shift ;;
+    --json) JSON=true; shift ;;
+    *)
+      if [[ "$1" =~ ^[0-9]+$ ]] && [ "$LIMIT" = "5" ]; then
+        LIMIT="$1"
+      elif [ "$FILTER" = "all" ]; then
+        FILTER="$1"
+      fi
+      shift
+      ;;
+  esac
 done
 
-if [ -z "$QUERY" ]; then
-    echo "Usage: ./search.sh \"query\" [limit] [filter] [options]"
-    echo ""
-    echo "Arguments:"
-    echo "  query             Search query (required)"
-    echo "  limit             Results to show (default: 5)"
-    echo "  filter            all (default), books, all-hawkins-books, lectures"
-    echo ""
-    echo "Options:"
-    echo "  -p, --page N      Page number (default: 1)"
-    echo "  -c, --context N   Context chars around each match (default: 300)"
-    echo "  --full            Show full snippet without truncation"
-    echo ""
-    echo "Examples:"
-    echo "  ./search.sh \"surrender\" 3"
-    echo "  ./search.sh \"forgiveness\" 2 lectures"
-    echo "  ./search.sh \"consciousness\" -p 2"
-    echo "  ./search.sh \"ego\" 1 --full"
-    echo "  ./search.sh \"love\" 2 -c 100       # smaller snippets"
-    exit 1
-fi
+ENCODED=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$QUERY")
+URL="$API?q=$ENCODED&limit=$LIMIT&page=$PAGE&filter=$FILTER&context=$CONTEXT"
+if [ -n "$GROUP" ]; then URL="$URL&groupDistance=$GROUP"; fi
+if [ "$PARTIAL" = true ]; then URL="$URL&wholeWords=false"; fi
 
 echo ""
 echo "🔍  docdocgo › \"$QUERY\""
 echo "    Limit: $LIMIT | Filter: $FILTER | Page: $PAGE | Context: $CONTEXT"
+echo "    GET /api/search"
 echo ""
 
-# URL-encode query
-ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$QUERY")
-
-# Fetch results
-curl -s "$API?q=$ENCODED&limit=$LIMIT&page=$PAGE&filter=$FILTER&context=$CONTEXT" | python3 -c "
-import json, sys
-
+curl -s "$URL" -H "User-Agent: $UA" -H "Accept: application/json" | python3 - "$FULL" "$JSON" <<'PY'
+import json, sys, re
+full = sys.argv[1] == "True" or sys.argv[1] == "true"
+as_json = sys.argv[2] == "True" or sys.argv[2] == "true"
 data = json.load(sys.stdin)
-results = data.get('results', [])
-total_matches = data.get('total_matches', 0)
-total_files = data.get('files_count', 0)
-total_pages = data.get('total_pages', 0)
-page = data.get('page', 1)
-limit = int(sys.argv[1]) if len(sys.argv) > 1 else 5
-full = sys.argv[2] == 'true' if len(sys.argv) > 2 else False
-
-# Summary line
-plural = 'match' if total_matches == 1 else 'matches'
-file_plural = 'file' if total_files == 1 else 'files'
-print(f'📚  {total_matches:,} {plural} across {total_files} {file_plural}')
-if total_pages > 1:
-    print(f'📄  Page {page} of {total_pages}')
+if as_json:
+    print(json.dumps(data, indent=2)[:12000])
+    raise SystemExit(0)
+if data.get("warning"):
+    print("⚠️ ", data["warning"].get("message"))
+    print()
+results = data.get("results") or []
+print(f"📚  {data.get('total_matches', 0):,} matches · {data.get('files_count', 0)} files · page {data.get('page')}/{data.get('total_pages')}")
+opts = data.get("options") or {}
+print(f"    contextChars={opts.get('contextChars')} groupDistance={opts.get('groupDistance')}")
 print()
-
-if not results:
-    print('   No results found.')
+q = data.get("query") or ""
+for i, row in enumerate(results, 1):
+    path = row.get("path", "")
+    sn = (row.get("snippet") or "").strip()
+    if sn.startswith("..."): sn = sn[3:]
+    if sn.endswith("..."): sn = sn[:-3]
+    sn = sn.strip()
+    m = re.search(re.escape(q), sn, re.I)
+    if m:
+        sn = sn[:m.start()] + ">>>" + sn[m.start():m.end()] + "<<<" + sn[m.end():]
+    if not full and len(sn) > 480:
+        hi = sn.find(">>>")
+        left = max(0, hi - 140) if hi >= 0 else 0
+        sn = ("..." if left else "") + sn[left:left+480] + "..."
+    title = path.replace("_enxautogen_html","").replace("_html","").replace("_"," ")
+    print(f"#{i} {title}")
+    print(f"   path: {path}")
+    print(f"   score {row.get('score')} · prox {row.get('proximity')} · offset {row.get('offset')}")
+    print(f"   {sn}")
     print()
-
-for i, r in enumerate(results[:limit], 1):
-    path = r.get('path', 'unknown')
-    match_count = r.get('match_count', 0)
-    score = r.get('score', 0)
-    snippet = r.get('snippet', '')
-    chapter = r.get('chapter', '')
-    match_text = r.get('match_text', [])
-    offset = r.get('offset', 0)
-
-    # Clean up path for display
-    display_path = path.replace('_enxautogen_html', '').replace('_html', '').replace('_', ' ').strip()
-    display_path = ' '.join(w.capitalize() for w in display_path.split())
-
-    print(f'╭──  #{i}  ───────────────────────────────')
-    print(f'│ 📄 {display_path}')
-    if chapter:
-        print(f'│ 📖 {chapter}')
-    mtext = ', '.join(f'\"{w}\"' for w in match_text)
-    print(f'│ 🎯 {match_count} matches | score {score} | keywords: {mtext}')
-    
-    if snippet:
-        # Clean snippet: remove leading/trailing ...
-        clean = snippet.strip()
-        if clean.startswith('...'):
-            clean = clean[3:]
-        if clean.endswith('...'):
-            clean = clean[:-3]
-        clean = clean.strip()
-        
-        if full:
-            print(f'│')
-            print(f'│ {clean}')
-        else:
-            # Show first 350 chars
-            short = clean[:350]
-            if len(clean) > 350:
-                short += '...'
-            print(f'│')
-            print(f'│ {short}')
-    
-    print(f'╰───────────────────────────────────────')
-    print()
-" "$LIMIT" "$FULL"
+PY
